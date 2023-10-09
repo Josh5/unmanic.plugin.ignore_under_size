@@ -23,6 +23,7 @@
 """
 import os
 import humanfriendly
+import subprocess
 import logging
 from unmanic.libs.unplugins.settings import PluginSettings
 
@@ -32,18 +33,38 @@ logger = logging.getLogger("Unmanic.Plugin.ignore_under_size")
 
 class Settings(PluginSettings):
     settings = {
+        "per_hour": False,
         "minimum_file_size": '0'
     }
     form_settings = {
+        "per_hour": {
+            "label": "Per hour",
+        },
         "minimum_file_size": {
             "label": "Minimum file size",
         },
     }
 
 
-def check_file_size_under_max_file_size(path, minimum_file_size):
+def get_runtime(path):
+    """Get the runtime of the file in hours"""
+    result = subprocess.run(
+        ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1',
+         path],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT)
+    return float(result.stdout) / 3600
+
+
+def check_file_size_under_max_file_size(path, minimum_file_size, per_hour):
     file_stats = os.stat(os.path.join(path))
-    if int(humanfriendly.parse_size(minimum_file_size)) < int(file_stats.st_size):
+    max_size = int(humanfriendly.parse_size(minimum_file_size))
+    actual_size = int(file_stats.st_size)
+
+    if per_hour:
+        actual_size = actual_size / get_runtime(path)
+
+    if max_size < actual_size:
         return False
     return True
 
@@ -67,9 +88,10 @@ def on_library_management_file_test(data):
     else:
         settings = Settings()
 
+    per_hour = settings.get_setting('per_hour')
     minimum_file_size = settings.get_setting('minimum_file_size')
 
-    if check_file_size_under_max_file_size(data.get('path'), minimum_file_size):
+    if check_file_size_under_max_file_size(data.get('path'), minimum_file_size, per_hour):
         # Ignore this file
         data['add_file_to_pending_tasks'] = False
         data['issues'].append({
